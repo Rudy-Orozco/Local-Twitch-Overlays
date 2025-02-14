@@ -27,7 +27,7 @@
             showAlert("Test Alert: New Follower!");
         });
 
-        // WebSocket for real alerts (replace with your actual WebSocket server)
+        // yWebSocket for real alerts (replace with your actual WebSocket server)
         const ws = new WebSocket('ws://170.9.236.149:8080');
         ws.onmessage = (event) => {
             showAlert(event.data);
