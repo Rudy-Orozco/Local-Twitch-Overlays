@@ -6,18 +6,33 @@
     <title>Twitch Alert Overlay</title>
     <style>
         body { background: transparent; color: white; font-size: 24px; text-align: center; }
-        #alert { display: none; font-weight: bold; }
+        #alert { display: none; font-weight: bold; padding: 10px; border: 2px solid white; margin-top: 20px; }
+        #test-button { padding: 10px 20px; font-size: 16px; cursor: pointer; margin-top: 20px; }
     </style>
 </head>
 <body>
+    <button id="test-button">Test Alert</button>
     <div id="alert">New Follower!</div>
+
     <script>
-        const ws = new WebSocket('wss://your-websocket-server.com');
-        ws.onmessage = (event) => {
-            const alertBox = document.getElementById('alert');
-            alertBox.textContent = event.data;
+        const alertBox = document.getElementById('alert');
+        const testButton = document.getElementById('test-button');
+
+        function showAlert(message) {
+            alertBox.textContent = message;
             alertBox.style.display = 'block';
             setTimeout(() => { alertBox.style.display = 'none'; }, 5000);
+        }
+
+        // Test Alert on Button Click
+        testButton.addEventListener('click', () => {
+            showAlert("Test Alert: New Follower!");
+        });
+
+        // WebSocket for real alerts (replace with your actual WebSocket server)
+        const ws = new WebSocket('wss://your-websocket-server.com');
+        ws.onmessage = (event) => {
+            showAlert(event.data);
         };
     </script>
 </body>
