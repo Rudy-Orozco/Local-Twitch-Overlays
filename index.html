@@ -6,13 +6,13 @@
     <title>Twitch Alert Overlay</title>
     <style>
         body { background: transparent; color: white; font-size: 24px; text-align: center; }
-        #alert { display: none; font-weight: bold; padding: 10px; border: 2px solid white; margin-top: 20px; }
+        #alert { font-weight: bold; padding: 10px; border: 2px solid white; margin-top: 20px; min-height: 30px; }
         #test-button { padding: 10px 20px; font-size: 16px; cursor: pointer; margin-top: 20px; }
     </style>
 </head>
 <body>
     <button id="test-button">Test Alert</button>
-    <div id="alert">New Follower!</div>
+    <div id="alert">No alerts yet.</div>
 
     <script>
         const alertBox = document.getElementById('alert');
@@ -20,8 +20,6 @@
 
         function showAlert(message) {
             alertBox.textContent = message;
-            alertBox.style.display = 'block';
-            setTimeout(() => { alertBox.style.display = 'none'; }, 5000);
         }
 
         // Test Alert on Button Click
