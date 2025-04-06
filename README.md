@@ -14,6 +14,7 @@ This personal project of mine is to create a native app that will host a localiz
 # How to use and setup.
 
 [WILL GET BACK TO THIS. CAPSTONE PROJECT HAS PRIORITY]
+Will need to make a .env template with proper examples and documentation. Again... Leading a software team is a lot.
 
 # Updates: 
 [04/05/2025] \
