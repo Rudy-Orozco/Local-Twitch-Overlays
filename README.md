@@ -3,6 +3,14 @@
 
 This personal project of mine is to create a native app that will host a localized browser source for Twitch streamers to not have to rely on 3rd party providers.
 
+# GOALS:
+- ~Successfully make a repository~
+- Decide on backend language and UI framework
+- Make streamlined onboarding process 
+- Make simple HTML alert for streams 
+- Add an import feature to allow custom files 
+- [Very ambitious] Make a live edit feature to edit overlays
+- More to come!
 # How to use and setup.
 
 [WILL GET BACK TO THIS. CAPSTONE PROJECT HAS PRIORITY]
