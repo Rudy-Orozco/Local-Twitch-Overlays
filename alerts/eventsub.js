@@ -3,6 +3,7 @@ import fs from "fs";
 import fetch from "node-fetch";
 import path from "path";
 import { fileURLToPath } from "url";
+import readline from "readline"; // Import readline for terminal input
 
 // --- Import the refreshToken function correctly ---
 import { refreshToken } from "../server/server.js";
@@ -18,6 +19,66 @@ dotenv.config({ path: ENV_PATH });
 const CLIENT_ID = process.env.TWITCH_CLIENT_ID;
 
 let keepaliveTimeout;
+let twitchSocket; // Make WebSocket instance global to be accessible by shutdown
+let userAccessToken; // Store the User Access Token for cleanup
+
+// --- Helper Functions for cleanup ---
+
+/**
+ * Deletes a specific EventSub subscription by its ID and type.
+ * USES THE USER ACCESS TOKEN.
+ */
+async function deleteSubscription(token, id, type) {
+  try {
+    const response = await fetch(
+      `https://api.twitch.tv/helix/eventsub/subscriptions?id=${id}`,
+      {
+        method: "DELETE",
+        headers: {
+          "Client-ID": CLIENT_ID,
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+    if (response.status === 204) {
+      console.log(`   ✅ Successfully deleted subscription: ${type} (${id})`);
+    } else {
+      console.warn(
+        `   ⚠️ Failed to delete ${type} (${id}). Status: ${response.status}`
+      );
+    }
+  } catch (err) {
+    console.error(`   ❌ Network error deleting ${type} (${id}):`, err.message);
+  }
+}
+
+/**
+ * Fetches a list of all active EventSub subscriptions.
+ * USES THE USER ACCESS TOKEN.
+ */
+async function listSubscriptions(token) {
+  console.log("Fetching all active subscriptions for cleanup...");
+  try {
+    const response = await fetch(
+      "https://api.twitch.tv/helix/eventsub/subscriptions",
+      {
+        headers: {
+          "Client-ID": CLIENT_ID,
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+    if (!response.ok)
+      throw new Error(`Failed to list subs: ${response.status}`);
+    const data = await response.json();
+    return data.data; // This is an array of subscription objects
+  } catch (err) {
+    console.error("❌ Error listing subscriptions:", err.message);
+    return null;
+  }
+}
+
+// --- Main WebSocket Logic ---
 
 async function getUserId(accessToken) {
   try {
@@ -41,23 +102,26 @@ async function getUserId(accessToken) {
 }
 
 function connectToTwitch() {
-  const ws = new WebSocket("wss://eventsub.wss.twitch.tv/ws");
+  // Assign to the global variable
+  twitchSocket = new WebSocket("wss://eventsub.wss.twitch.tv/ws");
 
-  ws.on("open", () => {
+  twitchSocket.on("open", () => {
     console.log("✅ WebSocket connection established.");
   });
 
-  ws.on("message", async (message) => {
+  twitchSocket.on("message", async (message) => {
     const data = JSON.parse(message.toString());
     const messageType = data.metadata.message_type;
-    
+
     // Reset keepalive timer on any message from Twitch
     clearTimeout(keepaliveTimeout);
-    if(data.payload.session) {
+    if (data.payload.session) {
       const timeout = data.payload.session.keepalive_timeout_seconds;
       keepaliveTimeout = setTimeout(() => {
-        console.warn("⏰ Keepalive timeout! No message received from Twitch. Reconnecting...");
-        ws.terminate();
+        console.warn(
+          "⏰ Keepalive timeout! No message received from Twitch. Reconnecting..."
+        );
+        twitchSocket.terminate();
       }, (timeout + 2) * 1000);
     }
 
@@ -66,13 +130,25 @@ function connectToTwitch() {
         console.log("🎉 Received session_welcome. Subscribing via HTTP API...");
         const sessionId = data.payload.session.id;
         const tokens = JSON.parse(fs.readFileSync(TOKEN_PATH, "utf-8"));
-        const accessToken = tokens.access_token;
-        const userId = await getUserId(accessToken);
+        userAccessToken = tokens.access_token; // Store the token globally for cleanup
+        const userId = await getUserId(userAccessToken);
         console.log(`Authenticated as user ID: ${userId}`);
-        
+
         // Subscribe to events using the correct HTTP method
-        await subscribeToEvent(accessToken, "channel.follow", "2", { broadcaster_user_id: userId, moderator_user_id: userId }, sessionId);
-        await subscribeToEvent(accessToken, "channel.subscribe", "1", { broadcaster_user_id: userId }, sessionId);
+        await subscribeToEvent(
+          userAccessToken,
+          "channel.follow",
+          "2",
+          { broadcaster_user_id: userId, moderator_user_id: userId },
+          sessionId
+        );
+        await subscribeToEvent(
+          userAccessToken,
+          "channel.subscribe",
+          "1",
+          { broadcaster_user_id: userId },
+          sessionId
+        );
         break;
 
       case "session_keepalive":
@@ -83,10 +159,10 @@ function connectToTwitch() {
         console.log("🔥 Event Received! 🔥");
         console.log(JSON.stringify(data.payload.event, null, 2));
         break;
-      
+
       case "session_reconnect":
         console.log("🔄 Twitch requested a reconnect. Closing and reconnecting...");
-        ws.terminate();
+        twitchSocket.terminate();
         break;
 
       default:
@@ -95,19 +171,30 @@ function connectToTwitch() {
     }
   });
 
-  ws.on("close", (code) => {
+  twitchSocket.on("close", (code) => {
     clearTimeout(keepaliveTimeout);
-    console.warn(`⚠️ WebSocket closed with code ${code}. Reconnecting in 5 seconds...`);
-    setTimeout(connectToTwitch, 5000);
+    console.warn(
+      `⚠️ WebSocket closed with code ${code}. Reconnecting in 5 seconds...`
+    );
+    // Don't reconnect if we are shutting down
+    if (code !== 1000) {
+      setTimeout(connectToTwitch, 5000);
+    }
   });
 
-  ws.on("error", (err) => {
+  twitchSocket.on("error", (err) => {
     console.error("❌ WebSocket error:", err);
   });
 }
 
-// --- THIS FUNCTION IS REWRITTEN TO USE THE HTTP API ---
-async function subscribeToEvent(accessToken, type, version, condition, sessionId) {
+// --- HTTP Subscription Function ---
+async function subscribeToEvent(
+  accessToken,
+  type,
+  version,
+  condition,
+  sessionId
+) {
   const body = {
     type,
     version,
@@ -119,30 +206,102 @@ async function subscribeToEvent(accessToken, type, version, condition, sessionId
   };
 
   try {
-    const response = await fetch("https://api.twitch.tv/helix/eventsub/subscriptions", {
-      method: "POST",
-      headers: {
-        "Client-ID": CLIENT_ID,
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
+    const response = await fetch(
+      "https://api.twitch.tv/helix/eventsub/subscriptions",
+      {
+        method: "POST",
+        headers: {
+          "Client-ID": CLIENT_ID,
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      }
+    );
+
+    const responseData = await response.json(); // Get JSON response
 
     if (response.status === 202) {
+      const sub = responseData.data[0];
       console.log(`✅ Successfully subscribed to ${type} (v${version})`);
+      console.log(`   - ID: ${sub.id}`);
+      console.log(`   - Status: ${sub.status}`);
     } else {
-      const errorData = await response.json();
-      console.error(`❌ Failed to subscribe to ${type}. Status: ${response.status}`, errorData);
+      console.error(
+        `❌ Failed to subscribe to ${type}. Status: ${response.status}`,
+        responseData // Log the full error response
+      );
     }
   } catch (error) {
     console.error(`❌ Network error while subscribing to ${type}:`, error);
   }
 }
 
-// --- Start the client ---
-if (!fs.existsSync(TOKEN_PATH)) {
-  console.error("❌ tokens.json not found! Please run the server and authenticate first.");
-} else {
-  connectToTwitch();
+// --- Graceful Shutdown Logic ---
+async function shutdown() {
+  console.log("\n--- Starting Graceful Shutdown ---");
+
+  // 1. Check if we have the User Access Token
+  if (!userAccessToken) {
+    console.error(
+      "Cleanup failed: User Access Token not available. (Session may not have started)."
+    );
+  } else {
+    // 2. Get all subscriptions using the User Access Token
+    const subscriptions = await listSubscriptions(userAccessToken);
+    if (subscriptions && subscriptions.length > 0) {
+      console.log(`Found ${subscriptions.length} subscriptions to delete:`);
+
+      // 3. Delete all sequentially for clearer logging
+      for (const sub of subscriptions) {
+        console.log(`\nDeleting ${sub.type} (ID: ${sub.id})...`);
+        await deleteSubscription(userAccessToken, sub.id, sub.type);
+      }
+
+      console.log("\n--- ✅ Subscription Cleanup Complete ---");
+    } else if (subscriptions) {
+      console.log("✨ No active subscriptions found to clean up.");
+    }
+  }
+
+  // 4. Close WebSocket
+  if (twitchSocket) {
+    console.log("Closing WebSocket connection...");
+    twitchSocket.close(1000, "Server shutting down");
+  }
+
+  // 5. Exit process
+  console.log("Shutdown complete. Exiting.");
+  process.exit(0);
 }
+
+// --- Start the client and listen for "stop" ---
+if (!fs.existsSync(TOKEN_PATH)) {
+  console.error(
+    "❌ tokens.json not found! Please run the server and authenticate first."
+  );
+} else {
+  // Start the WebSocket client
+  connectToTwitch();
+
+  // Start listening for terminal input
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  console.log('\nType "stop" and press Enter to gracefully shut down.\n');
+
+  rl.on("line", (input) => {
+    if (input.trim().toLowerCase() === "stop") {
+      rl.close();
+      shutdown();
+    }
+  });
+
+  // Also trigger shutdown on Ctrl+C
+  rl.on("SIGINT", () => {
+    shutdown();
+  });
+}
+
