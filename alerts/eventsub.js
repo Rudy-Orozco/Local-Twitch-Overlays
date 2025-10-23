@@ -6,7 +6,7 @@ import { fileURLToPath } from "url";
 import readline from "readline"; // Import readline for terminal input
 
 // --- Import the refreshToken function correctly ---
-import { refreshToken } from "../server/server.js";
+import { refreshToken } from "../server/refreshtoken.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,14 +41,14 @@ async function deleteSubscription(token, id, type) {
       }
     );
     if (response.status === 204) {
-      console.log(`   ✅ Successfully deleted subscription: ${type} (${id})`);
+      console.log(`   [SUCCESS] Successfully deleted subscription: ${type} (${id})`);
     } else {
       console.warn(
-        `   ⚠️ Failed to delete ${type} (${id}). Status: ${response.status}`
+        `   [WARNING] Failed to delete ${type} (${id}). Status: ${response.status}`
       );
     }
   } catch (err) {
-    console.error(`   ❌ Network error deleting ${type} (${id}):`, err.message);
+    console.error(`   [ERROR] Network error deleting ${type} (${id}):`, err.message);
   }
 }
 
@@ -69,11 +69,11 @@ async function listSubscriptions(token) {
       }
     );
     if (!response.ok)
-      throw new Error(`Failed to list subs: ${response.status}`);
+      throw new Error(`[ERROR] Failed to list subs: ${response.status}`);
     const data = await response.json();
     return data.data; // This is an array of subscription objects
   } catch (err) {
-    console.error("❌ Error listing subscriptions:", err.message);
+    console.error("[ERROR] Error listing subscriptions:", err.message);
     return null;
   }
 }
@@ -94,8 +94,8 @@ async function getUserId(accessToken) {
     }
     return data.data[0].id;
   } catch (err) {
-    console.error("❌ Error fetching user ID:", err.message);
-    console.log("Refreshing token due to user fetch error...");
+    console.error("[ERROR] Error fetching user ID:", err.message);
+    console.log("[ERROR] Refreshing token due to user fetch error...");
     const newAccessToken = await refreshToken();
     return getUserId(newAccessToken); // Retry with the new token
   }
@@ -106,7 +106,7 @@ function connectToTwitch() {
   twitchSocket = new WebSocket("wss://eventsub.wss.twitch.tv/ws");
 
   twitchSocket.on("open", () => {
-    console.log("✅ WebSocket connection established.");
+    console.log("[SUCCESS] WebSocket connection established.");
   });
 
   twitchSocket.on("message", async (message) => {
@@ -119,7 +119,7 @@ function connectToTwitch() {
       const timeout = data.payload.session.keepalive_timeout_seconds;
       keepaliveTimeout = setTimeout(() => {
         console.warn(
-          "⏰ Keepalive timeout! No message received from Twitch. Reconnecting..."
+          "[WARNING] Keepalive timeout! No message received from Twitch. Reconnecting..."
         );
         twitchSocket.terminate();
       }, (timeout + 2) * 1000);
@@ -127,7 +127,7 @@ function connectToTwitch() {
 
     switch (messageType) {
       case "session_welcome":
-        console.log("🎉 Received session_welcome. Subscribing via HTTP API...");
+        console.log("[ROUTINE] Received session_welcome. Subscribing via HTTP API...");
         const sessionId = data.payload.session.id;
         const tokens = JSON.parse(fs.readFileSync(TOKEN_PATH, "utf-8"));
         userAccessToken = tokens.access_token; // Store the token globally for cleanup
@@ -152,21 +152,21 @@ function connectToTwitch() {
         break;
 
       case "session_keepalive":
-        console.log("💓 Keepalive received. Connection is healthy.");
+        console.log("[ROUTINE] Keepalive received. Connection is healthy.");
         break;
 
       case "notification":
-        console.log("🔥 Event Received! 🔥");
+        console.log("[ROUTINE] Event Received");
         console.log(JSON.stringify(data.payload.event, null, 2));
         break;
 
       case "session_reconnect":
-        console.log("🔄 Twitch requested a reconnect. Closing and reconnecting...");
+        console.log("[ROUTINE] Twitch requested a reconnect. Closing and reconnecting...");
         twitchSocket.terminate();
         break;
 
       default:
-        console.log(`Received unknown message type: ${messageType}`);
+        console.log(`[WARNING] Received unknown message type: ${messageType}`);
         console.log(JSON.stringify(data, null, 2));
     }
   });
@@ -174,7 +174,7 @@ function connectToTwitch() {
   twitchSocket.on("close", (code) => {
     clearTimeout(keepaliveTimeout);
     console.warn(
-      `⚠️ WebSocket closed with code ${code}. Reconnecting in 5 seconds...`
+      `[WARNING] WebSocket closed with code ${code}. Reconnecting in 5 seconds...`
     );
     // Don't reconnect if we are shutting down
     if (code !== 1000) {
@@ -183,7 +183,7 @@ function connectToTwitch() {
   });
 
   twitchSocket.on("error", (err) => {
-    console.error("❌ WebSocket error:", err);
+    console.error("[ERROR] WebSocket error:", err);
   });
 }
 
@@ -223,17 +223,17 @@ async function subscribeToEvent(
 
     if (response.status === 202) {
       const sub = responseData.data[0];
-      console.log(`✅ Successfully subscribed to ${type} (v${version})`);
-      console.log(`   - ID: ${sub.id}`);
-      console.log(`   - Status: ${sub.status}`);
+      console.log(`[SUCCESS] Successfully subscribed to ${type} (v${version})`);
+      console.log(`[SUCCESS]   - ID: ${sub.id}`);
+      console.log(`[SUCCESS]   - Status: ${sub.status}`);
     } else {
       console.error(
-        `❌ Failed to subscribe to ${type}. Status: ${response.status}`,
+        `[ERROR] Failed to subscribe to ${type}. Status: ${response.status}`,
         responseData // Log the full error response
       );
     }
   } catch (error) {
-    console.error(`❌ Network error while subscribing to ${type}:`, error);
+    console.error(`[ERROR] Network error while subscribing to ${type}:`, error);
   }
 }
 
@@ -258,9 +258,9 @@ async function shutdown() {
         await deleteSubscription(userAccessToken, sub.id, sub.type);
       }
 
-      console.log("\n--- ✅ Subscription Cleanup Complete ---");
+      console.log("\n--- Subscription Cleanup Complete ---");
     } else if (subscriptions) {
-      console.log("✨ No active subscriptions found to clean up.");
+      console.log("[ROUTINE] No active subscriptions found to clean up.");
     }
   }
 
@@ -278,7 +278,7 @@ async function shutdown() {
 // --- Start the client and listen for "stop" ---
 if (!fs.existsSync(TOKEN_PATH)) {
   console.error(
-    "❌ tokens.json not found! Please run the server and authenticate first."
+    "[ERROR] tokens.json not found! Please run the server and authenticate first."
   );
 } else {
   // Start the WebSocket client
